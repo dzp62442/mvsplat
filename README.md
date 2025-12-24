@@ -1,3 +1,21 @@
+在 OmniScene 数据集上与 SVF-GS 进行对比
+
+### 训练
+```bash
+python -m src.main +experiment=omniscene_112x200
+```
+
+### 测试
+``` bash
+python -m src.main +experiment=omniscene_112x200 \
+  mode=test \
+  checkpointing.load=checkpoints/omniscene_112x200.ckpt \
+  dataset/view_sampler=all \
+  test.compute_scores=true
+```
+
+---
+
 <p align="center">
   <h1 align="center">MVSplat: Efficient 3D Gaussian Splatting <br> from Sparse Multi-View Images</h1>
   <p align="center">

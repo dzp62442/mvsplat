@@ -50,6 +50,7 @@ train:
   depth_mode: null
   extended_visualization: false
   print_log_every_n_steps: 1
+  use_dynamic_mask: false
 
 test:
   output_path: outputs/test

@@ -1,0 +1,28 @@
+# @package _global_
+
+defaults:
+  - override /dataset: omniscene
+  - override /model/encoder: costvolume
+  - override /loss: [mse, lpips]
+
+wandb:
+  name: omniscene_224x400
+  tags: [omniscene, 224x400]
+
+data_loader:
+  train:
+    batch_size: 1
+
+trainer:
+  max_steps: 100_001
+  val_check_interval: 0.01
+
+train:
+  use_dynamic_mask: true
+
+dataset:
+  image_shape: [224, 400]
+
+test:
+  eval_time_skip_steps: 5
+  compute_scores: true

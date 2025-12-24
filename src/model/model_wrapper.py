@@ -37,7 +37,7 @@ from ..visualization.color_map import apply_color_map_to_image
 from ..visualization.layout import add_border, hcat, vcat
 from ..visualization import layout
 from ..visualization.validation_in_3d import render_cameras, render_projections
-from .decoder.decoder import Decoder, DepthRenderingMode
+from .decoder.decoder import Decoder, DecoderOutput, DepthRenderingMode
 from .encoder import Encoder
 from .encoder.visualization.encoder_visualizer import EncoderVisualizer
 
@@ -63,6 +63,7 @@ class TrainCfg:
     depth_mode: DepthRenderingMode | None
     extended_visualization: bool
     print_log_every_n_steps: int
+    use_dynamic_mask: bool
 
 
 @runtime_checkable
@@ -120,6 +121,26 @@ class ModelWrapper(LightningModule):
             self.test_step_outputs = {}
             self.time_skip_steps_dict = {"encoder": 0, "decoder": 0}
 
+    def _get_dynamic_mask(self, batch: BatchedExample) -> torch.Tensor | None:
+        if not self.train_cfg.use_dynamic_mask:
+            return None
+        masks = batch["target"].get("masks")
+        if masks is None:
+            return None
+        return masks.to(self.device)
+
+    def _apply_dynamic_mask(
+        self,
+        batch: BatchedExample,
+        prediction: torch.Tensor,
+        target: torch.Tensor,
+    ) -> tuple[torch.Tensor | None, torch.Tensor, torch.Tensor]:
+        masks = self._get_dynamic_mask(batch)
+        if masks is None:
+            return None, prediction, target
+        expanded = masks.unsqueeze(2).to(prediction.dtype)
+        return expanded, prediction * expanded, target * expanded
+
     def training_step(self, batch, batch_idx):
         batch: BatchedExample = self.data_shim(batch)
         _, _, _, h, w = batch["target"]["image"].shape
@@ -138,18 +159,32 @@ class ModelWrapper(LightningModule):
             depth_mode=self.train_cfg.depth_mode,
         )
         target_gt = batch["target"]["image"]
+        mask, masked_prediction, masked_target = self._apply_dynamic_mask(
+            batch, output.color, target_gt
+        )
+        loss_prediction = (
+            output if mask is None else DecoderOutput(masked_prediction, output.depth)
+        )
+        loss_batch = (
+            batch
+            if mask is None
+            else {
+                **batch,
+                "target": {**batch["target"], "image": masked_target},
+            }
+        )
 
         # Compute metrics.
         psnr_probabilistic = compute_psnr(
-            rearrange(target_gt, "b v c h w -> (b v) c h w"),
-            rearrange(output.color, "b v c h w -> (b v) c h w"),
+            rearrange(masked_target, "b v c h w -> (b v) c h w"),
+            rearrange(masked_prediction, "b v c h w -> (b v) c h w"),
         )
         self.log("train/psnr_probabilistic", psnr_probabilistic.mean())
 
         # Compute and log loss.
         total_loss = 0
         for loss_fn in self.losses:
-            loss = loss_fn.forward(output, batch, gaussians, self.global_step)
+            loss = loss_fn.forward(loss_prediction, loss_batch, gaussians, self.global_step)
             self.log(f"loss/{loss_fn.name}", loss)
             total_loss = total_loss + loss
         self.log("loss/total", total_loss)
@@ -204,6 +239,9 @@ class ModelWrapper(LightningModule):
         path = self.test_cfg.output_path / name
         images_prob = output.color[0]
         rgb_gt = batch["target"]["image"][0]
+        _, masked_prediction, masked_target = self._apply_dynamic_mask(
+            batch, output.color, batch["target"]["image"]
+        )
 
         # Save images.
         if self.test_cfg.save_image:
@@ -223,8 +261,8 @@ class ModelWrapper(LightningModule):
             if batch_idx < self.test_cfg.eval_time_skip_steps:
                 self.time_skip_steps_dict["encoder"] += 1
                 self.time_skip_steps_dict["decoder"] += v
-            rgb = images_prob
-
+            rgb = masked_prediction
+            rgb_gt_metrics = masked_target
             if f"psnr" not in self.test_step_outputs:
                 self.test_step_outputs[f"psnr"] = []
             if f"ssim" not in self.test_step_outputs:
@@ -232,14 +270,16 @@ class ModelWrapper(LightningModule):
             if f"lpips" not in self.test_step_outputs:
                 self.test_step_outputs[f"lpips"] = []
 
+            rgb_gt_flat = rearrange(rgb_gt_metrics, "b v c h w -> (b v) c h w")
+            rgb_flat = rearrange(rgb, "b v c h w -> (b v) c h w")
             self.test_step_outputs[f"psnr"].append(
-                compute_psnr(rgb_gt, rgb).mean().item()
+                compute_psnr(rgb_gt_flat, rgb_flat).mean().item()
             )
             self.test_step_outputs[f"ssim"].append(
-                compute_ssim(rgb_gt, rgb).mean().item()
+                compute_ssim(rgb_gt_flat, rgb_flat).mean().item()
             )
             self.test_step_outputs[f"lpips"].append(
-                compute_lpips(rgb_gt, rgb).mean().item()
+                compute_lpips(rgb_gt_flat, rgb_flat).mean().item()
             )
 
     def on_test_end(self) -> None:
@@ -307,14 +347,19 @@ class ModelWrapper(LightningModule):
 
         # Compute validation metrics.
         rgb_gt = batch["target"]["image"][0]
+        _, masked_val_pred, masked_val_target = self._apply_dynamic_mask(
+            batch, output_softmax.color, batch["target"]["image"]
+        )
+        rgb_softmax_metrics = masked_val_pred[0]
+        rgb_gt_metrics = masked_val_target[0]
         for tag, rgb in zip(
-            ("val",), (rgb_softmax,)
+            ("val",), (rgb_softmax_metrics,)
         ):
-            psnr = compute_psnr(rgb_gt, rgb).mean()
+            psnr = compute_psnr(rgb_gt_metrics, rgb).mean()
             self.log(f"val/psnr_{tag}", psnr)
-            lpips = compute_lpips(rgb_gt, rgb).mean()
+            lpips = compute_lpips(rgb_gt_metrics, rgb).mean()
             self.log(f"val/lpips_{tag}", lpips)
-            ssim = compute_ssim(rgb_gt, rgb).mean()
+            ssim = compute_ssim(rgb_gt_metrics, rgb).mean()
             self.log(f"val/ssim_{tag}", ssim)
 
         # Construct comparison image.
