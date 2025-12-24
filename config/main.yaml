@@ -7,9 +7,8 @@ defaults:
 
 wandb:
   project: mvsplat
-  entity: placeholder
-  name: placeholder
-  mode: disabled
+  entity: dzp62442-DROPS
+  mode: online
   id: null
 
 mode: train

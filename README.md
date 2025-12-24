@@ -46,7 +46,7 @@ git clone https://github.com/donydchen/mvsplat.git
 cd mvsplat
 conda create -n mvsplat python=3.10
 conda activate mvsplat
-pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu118
+pip install numpy==1.26.3 torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu118
 pip install -r requirements.txt
 ```
 
