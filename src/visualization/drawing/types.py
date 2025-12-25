@@ -10,8 +10,12 @@ Real = Union[float, int]
 Vector = Union[
     Real,
     Iterable[Real],
+    Shaped[Tensor, "2"],
     Shaped[Tensor, "3"],
     Shaped[Tensor, "batch 3"],
+    Shaped[Tensor, "batch 2"],
+    Shaped[Tensor, "batch point 3"],
+    Shaped[Tensor, "batch point 2"],
 ]
 
 
@@ -24,12 +28,13 @@ def sanitize_vector(
         vector = vector.type(torch.float32).to(device)
     else:
         vector = torch.tensor(vector, dtype=torch.float32, device=device)
-    while vector.ndim < 2:
+    if vector.ndim == 0:
+        vector = vector[None]
+    if vector.ndim == 1:
         vector = vector[None]
     if vector.shape[-1] == 1:
         vector = repeat(vector, "... () -> ... c", c=dim)
     assert vector.shape[-1] == dim
-    assert vector.ndim == 2
     return vector
 
 
