@@ -56,7 +56,7 @@ test:
   output_path: outputs/test
   compute_scores: false
   eval_time_skip_steps: 0
-  save_image: true
+  save_image: false
   save_video: false
 
 seed: 111123

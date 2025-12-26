@@ -2,16 +2,29 @@
 
 ### 训练
 ```bash
-python -m src.main +experiment=omniscene_112x200
+python -m src.main +experiment=omniscene_112x200 \
+mode=train \
+output_dir=checkpoints/omniscene-112x200-mvsplat
 ```
 
 ### 测试
+
+> 默认使用 mini-test 模式，如需完整测试，请手动注释 `dataset_omniscene.py` 中的抽样语句。
+
 ``` bash
 python -m src.main +experiment=omniscene_112x200 \
-  mode=test \
-  checkpointing.load=checkpoints/omniscene_112x200.ckpt \
-  dataset/view_sampler=all \
-  test.compute_scores=true
+mode=test \
+checkpointing.load=checkpoints/omniscene-112x200-mvsplat/checkpoints/epoch_0-step_100000.ckpt \
+dataset/view_sampler=all \
+test.output_path=outputs/omniscene-112x200-mvsplat \
+wandb.mode=disabled \
+test.compute_scores=true
+```
+
+- 保存可视化结果
+```bash
+test.save_image=true \
+test.save_video=true
 ```
 
 ---
