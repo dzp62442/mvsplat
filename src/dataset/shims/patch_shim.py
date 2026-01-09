@@ -32,6 +32,13 @@ def apply_patch_shim_to_views(views: BatchedViews, patch_size: int) -> BatchedVi
             row : row + h_new,
             col : col + w_new,
         ]
+    if "rel_depth" in views:
+        updated["rel_depth"] = views["rel_depth"][
+            :,
+            :,
+            row : row + h_new,
+            col : col + w_new,
+        ]
     return updated
 
 

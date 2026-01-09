@@ -50,6 +50,7 @@ class DatasetOmniScene(Dataset):
         cfg: DatasetOmniSceneCfg,
         stage: Stage,
         view_sampler: ViewSampler,
+        load_rel_depth: bool | None = None,
     ) -> None:
         super().__init__()
         self.cfg = cfg
@@ -59,6 +60,9 @@ class DatasetOmniScene(Dataset):
         self.data_root = str(cfg.roots[0])
         self.near = 0.1 if cfg.near == -1 else cfg.near
         self.far = 1000.0 if cfg.far == -1 else cfg.far
+        self.load_rel_depth = stage == "test" if load_rel_depth is None else load_rel_depth
+        if stage != "test":
+            self.load_rel_depth = False
 
         self.bin_tokens = self._load_bin_tokens(stage)
 
@@ -104,10 +108,11 @@ class DatasetOmniScene(Dataset):
             context_c2w.append(c2w)
         context_c2w = torch.stack(context_c2w)
 
-        context_imgs, context_masks, context_intrinsics = load_conditions(
+        context_imgs, context_masks, context_intrinsics, context_rel_depths = load_conditions(
             context_paths,
             self.resolution,
             is_input=True,
+            load_rel_depth=self.load_rel_depth,
         )
 
         render_paths, render_c2w = [], []
@@ -122,16 +127,19 @@ class DatasetOmniScene(Dataset):
                 render_c2w.append(c2w)
         render_c2w = torch.stack(render_c2w)
 
-        target_imgs, target_masks, target_intrinsics = load_conditions(
+        target_imgs, target_masks, target_intrinsics, target_rel_depths = load_conditions(
             render_paths,
             self.resolution,
             is_input=False,
+            load_rel_depth=self.load_rel_depth,
         )
 
         target_imgs = torch.cat([target_imgs, context_imgs], dim=0)
         target_masks = torch.cat([target_masks, context_masks], dim=0)
         target_c2w = torch.cat([render_c2w, context_c2w], dim=0)
         target_intrinsics = torch.cat([target_intrinsics, context_intrinsics], dim=0)
+        if target_rel_depths is not None and context_rel_depths is not None:
+            target_rel_depths = torch.cat([target_rel_depths, context_rel_depths], dim=0)
 
         context = {
             "extrinsics": context_c2w,
@@ -150,6 +158,8 @@ class DatasetOmniScene(Dataset):
             "index": torch.arange(len(target_c2w)),
             "masks": target_masks,
         }
+        if target_rel_depths is not None:
+            target["rel_depth"] = target_rel_depths
 
         return {
             "context": context,

@@ -42,6 +42,22 @@
   这样即可最大化复用 depthsplat 的调用方式，同时确保 main 分支的其它实验不受影响。
 - **W&B/评估节奏**：mvsplat 没有 `train.eval_model_every_n_val` 机制，因而无法像 depthsplat 那样自动触发测试；文档中会说明「按照 README 的做法，若需要定期测试，可以在训练脚本之外按固定步数恢复 checkpoint 后运行 `mode=test` 命令」。
 
+## PCC 指标补充方案
+1. **相对深度加载（仅 test）**：
+   - 参照 depthsplat 的 OmniScene 方案，在 `src/dataset/utils_omniscene.py::load_conditions` 中新增 `load_rel_depth` 开关；当开启时读取 `samples_dpt_small`/`sweeps_dpt_small` 下的 `.npy` disparity，若发生 resize 需同步缩放，并把 disparity 转为相对深度（`depth = 1 / max(disp, min_val)`），限制最远/最近比例为 50，再做 min-max 归一化到 `[0, 1]`。
+   - `DatasetOmniScene.__init__` 增加 `load_rel_depth` 参数，默认只在 `stage == "test"` 时开启，其余阶段设置为 `False` 以减少 IO；返回结构中仅当加载成功时在 `target` 里追加 `rel_depth`。
+   - 如果启用了 `apply_patch_shim` 等数据裁剪（例如 encoder 的 `get_data_shim`），需要把 `rel_depth` 与 `image/masks/intrinsics` 同步裁剪，保证后续 PCC 计算像素对齐。
+2. **深度渲染来源**：
+   - 当前解码器 `DecoderSplattingCUDA.forward` 支持输出深度，但 `ModelWrapper.test_step` 调用时传入 `depth_mode=None`，因此 `output.depth` 为空，无法直接用于 PCC。
+   - 方案是在测试阶段按需启用深度渲染：当 `test.compute_scores` 且 `target.rel_depth` 存在时，把 `decoder.forward(..., depth_mode="depth")`（或使用 `relative_disparity` 与 rel_depth 对齐）并保留 `output.depth`，使 PCC 可以对 target 视角的渲染深度进行计算。
+   - 若担心额外开销，可新增独立开关（如 `test.compute_pcc` 或 `test.render_depth_for_metrics`），仅在计算 PCC 时开启深度渲染。
+3. **PCC 计算位置**：
+   - 在 `src/evaluation/metrics.py` 中新增 `compute_pcc`（与 PSNR/SSIM/LPIPS 放在一起），可使用 `torchmetrics.PearsonCorrCoef` 对展平后的 `rel_depth` 与 `output.depth` 计算相关系数。
+   - `ModelWrapper.test_step` 在计算 `psnr/ssim/lpips` 同步判断 `target.rel_depth` 与 `output.depth` 是否存在，存在则调用 `compute_pcc` 并加入指标列表。
+4. **PCC 统计与汇总**：
+   - 复用 `test_step_outputs` 的统计逻辑，增加 `pcc` key，并在 `on_test_end` 中与其它指标一样输出 `scores_pcc_all.json`、并写入 `scores_all_avg.json` 的汇总。
+   - 若后续引入额外评测入口（如批量测试脚本），确保其汇总代码与 `psnr/ssim/lpips` 同路径维护，以保持统计口径一致。
+
 ## 复用与差异总结
 - **可直接复用**：OmniScene 的数据解析、mask 加载、bin 抽样流程与 depthsplat 完全一致，可以在本仓库中基本照搬相应模块，只需调整 import 路径与配置对象。
 - **需要适配**：
